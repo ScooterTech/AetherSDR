@@ -2,6 +2,7 @@
 #include "RxApplet.h"
 #include "SMeterWidget.h"
 #include "TunerApplet.h"
+#include "TxApplet.h"
 
 #include <QPushButton>
 #include <QScrollArea>
@@ -141,8 +142,13 @@ AppletPanel::AppletPanel(QWidget* parent) : QWidget(parent)
         connect(m_tuneBtn, &QPushButton::toggled, m_tunerApplet, &QWidget::setVisible);
     }
 
-    // Placeholder applets — hidden by default
-    addApplet("TX",   makePlaceholder("TX"));
+    // TX applet — visible by default
+    m_txApplet = new TxApplet;
+    addApplet("TX",   m_txApplet);
+    // The TX button was just added by addApplet; check it to show the applet.
+    static_cast<QPushButton*>(btnLayout->itemAt(btnLayout->count() - 1)->widget())->setChecked(true);
+    m_txApplet->show();
+
     addApplet("PHNE", makePlaceholder("PHNE"));
     addApplet("P/CW", makePlaceholder("P/CW"));
     addApplet("EQ",   makePlaceholder("EQ"));

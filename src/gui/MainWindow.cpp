@@ -6,9 +6,11 @@
 #include "RxApplet.h"
 #include "SMeterWidget.h"
 #include "TunerApplet.h"
+#include "TxApplet.h"
 #include "models/SliceModel.h"
 #include "models/MeterModel.h"
 #include "models/TunerModel.h"
+#include "models/TransmitModel.h"
 
 #include <QApplication>
 #include <QVBoxLayout>
@@ -124,6 +126,11 @@ MainWindow::MainWindow(QWidget* parent)
     // Switch Fwd Power gauge scale when a power amplifier (PGXL) is detected
     connect(&m_radioModel, &RadioModel::amplifierChanged,
             m_appletPanel->tunerApplet(), &TunerApplet::setAmplifierMode);
+
+    // ── TX applet: meters + model ───────────────────────────────────────────
+    connect(m_radioModel.meterModel(), &MeterModel::txMetersChanged,
+            m_appletPanel->txApplet(), &TxApplet::updateMeters);
+    m_appletPanel->txApplet()->setTransmitModel(m_radioModel.transmitModel());
 
     // ── Audio level meter ──────────────────────────────────────────────────
     connect(&m_audio, &AudioEngine::levelChanged,

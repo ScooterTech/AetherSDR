@@ -1,0 +1,419 @@
+#include "TxApplet.h"
+#include "HGauge.h"
+#include "models/TransmitModel.h"
+
+#include <QPushButton>
+#include <QLabel>
+#include <QSlider>
+#include <QComboBox>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSignalBlocker>
+
+namespace AetherSDR {
+
+// ── Shared gradient title bar (matches AppletPanel / TunerApplet style) ─────
+
+static QWidget* appletTitleBar(const QString& text)
+{
+    auto* bar = new QWidget;
+    bar->setFixedHeight(16);
+    bar->setStyleSheet(
+        "QWidget { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        "stop:0 #3a4a5a, stop:0.5 #2a3a4a, stop:1 #1a2a38); "
+        "border-bottom: 1px solid #0a1a28; }");
+
+    auto* lbl = new QLabel(text, bar);
+    lbl->setStyleSheet("QLabel { background: transparent; color: #8aa8c0; "
+                       "font-size: 10px; font-weight: bold; }");
+    lbl->setGeometry(6, 1, 240, 14);
+    return bar;
+}
+
+// ── Styled indicator label (small coloured-dot + text) ──────────────────────
+
+static QLabel* makeIndicator(const QString& text)
+{
+    auto* lbl = new QLabel(text);
+    lbl->setStyleSheet("QLabel { color: #405060; font-size: 9px; font-weight: bold; }");
+    lbl->setAlignment(Qt::AlignCenter);
+    return lbl;
+}
+
+static void setIndicatorActive(QLabel* lbl, bool active, const QColor& color = QColor(0x00, 0xc0, 0x40))
+{
+    if (active) {
+        lbl->setStyleSheet(
+            QString("QLabel { color: %1; font-size: 9px; font-weight: bold; }").arg(color.name()));
+    } else {
+        lbl->setStyleSheet("QLabel { color: #405060; font-size: 9px; font-weight: bold; }");
+    }
+}
+
+// ── Compact slider row: "Label:  [slider] value" ────────────────────────────
+
+static constexpr const char* kSliderStyle =
+    "QSlider::groove:horizontal { height: 4px; background: #203040; border-radius: 2px; }"
+    "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+    "background: #00b4d8; border-radius: 5px; }";
+
+// ── TxApplet ────────────────────────────────────────────────────────────────
+
+TxApplet::TxApplet(QWidget* parent)
+    : QWidget(parent)
+{
+    hide();
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    buildUI();
+}
+
+void TxApplet::buildUI()
+{
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+
+    // Title bar
+    outer->addWidget(appletTitleBar("TX"));
+
+    // Body with margins
+    auto* body = new QWidget;
+    auto* vbox = new QVBoxLayout(body);
+    vbox->setContentsMargins(4, 2, 4, 2);
+    vbox->setSpacing(2);
+
+    // ── Forward Power gauge (0–120 W, red > 100 W) ─────────────────────────
+    m_fwdGauge = new HGauge(0.0f, 120.0f, 100.0f, "RF Pwr", "W",
+        {{0, "0"}, {40, "40"}, {80, "80"}, {100, "100"}, {120, "120"}});
+    vbox->addWidget(m_fwdGauge);
+
+    // ── SWR gauge (1.0–3.0, red > 2.5) ─────────────────────────────────────
+    m_swrGauge = new HGauge(1.0f, 3.0f, 2.5f, "SWR", "",
+        {{1.0f, "1"}, {1.5f, "1.5"}, {2.5f, "2.5"}, {3.0f, "3"}});
+    vbox->addWidget(m_swrGauge);
+
+    // ── RF Power slider ─────────────────────────────────────────────────────
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        auto* label = new QLabel("RF Power:");
+        label->setStyleSheet("QLabel { color: #8aa8c0; font-size: 10px; }");
+        label->setFixedWidth(62);
+        row->addWidget(label);
+
+        m_rfPowerSlider = new QSlider(Qt::Horizontal);
+        m_rfPowerSlider->setRange(0, 100);
+        m_rfPowerSlider->setStyleSheet(kSliderStyle);
+        row->addWidget(m_rfPowerSlider, 1);
+
+        m_rfPowerLabel = new QLabel("100");
+        m_rfPowerLabel->setStyleSheet("QLabel { color: #c8d8e8; font-size: 10px; }");
+        m_rfPowerLabel->setFixedWidth(22);
+        m_rfPowerLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(m_rfPowerLabel);
+        vbox->addLayout(row);
+    }
+
+    // ── Tune Power slider ───────────────────────────────────────────────────
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        auto* label = new QLabel("Tune Pwr:");
+        label->setStyleSheet("QLabel { color: #8aa8c0; font-size: 10px; }");
+        label->setFixedWidth(62);
+        row->addWidget(label);
+
+        m_tunePowerSlider = new QSlider(Qt::Horizontal);
+        m_tunePowerSlider->setRange(0, 100);
+        m_tunePowerSlider->setStyleSheet(kSliderStyle);
+        row->addWidget(m_tunePowerSlider, 1);
+
+        m_tunePowerLabel = new QLabel("10");
+        m_tunePowerLabel->setStyleSheet("QLabel { color: #c8d8e8; font-size: 10px; }");
+        m_tunePowerLabel->setFixedWidth(22);
+        m_tunePowerLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(m_tunePowerLabel);
+        vbox->addLayout(row);
+    }
+
+    // ── Profile dropdown + Success/Byp/Mem indicators (same row) ────────────
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+
+        m_profileCombo = new QComboBox;
+        m_profileCombo->setStyleSheet(
+            "QComboBox { background: #1a2a3a; border: 1px solid #203040; "
+            "border-radius: 3px; padding: 1px 1px; font-size: 10px; color: #c8d8e8; }"
+            "QComboBox::drop-down { border: none; width: 12px; }"
+            "QComboBox QAbstractItemView { background: #111120; color: #c8d8e8; "
+            "selection-background-color: #00b4d8; selection-color: #000; }");
+        m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        row->addWidget(m_profileCombo, 1);  // 1 out of 2 = 50%
+
+        m_successInd = makeIndicator("Success");
+        m_bypInd     = makeIndicator("Byp");
+        m_memInd     = makeIndicator("Mem");
+        auto* indRow = new QHBoxLayout;
+        indRow->setSpacing(0);
+        indRow->addWidget(m_successInd);
+        indRow->addWidget(m_bypInd);
+        indRow->addWidget(m_memInd);
+        row->addLayout(indRow, 1);  // 1 out of 2 = 50%
+        vbox->addLayout(row);
+    }
+
+    // ── TUNE / MOX / ATU / MEM buttons ──────────────────────────────────────
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(2);
+
+        const char* btnStyle =
+            "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
+            "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; "
+            "padding: 2px; }"
+            "QPushButton:hover { background: #204060; }";
+
+        m_tuneBtn = new QPushButton("TUNE");
+        m_tuneBtn->setStyleSheet(btnStyle);
+        m_tuneBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_tuneBtn->setFixedHeight(22);
+        row->addWidget(m_tuneBtn);
+
+        m_moxBtn = new QPushButton("MOX");
+        m_moxBtn->setStyleSheet(btnStyle);
+        m_moxBtn->setCheckable(true);
+        m_moxBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_moxBtn->setFixedHeight(22);
+        row->addWidget(m_moxBtn);
+
+        m_atuBtn = new QPushButton("ATU");
+        m_atuBtn->setStyleSheet(btnStyle);
+        m_atuBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_atuBtn->setFixedHeight(22);
+        row->addWidget(m_atuBtn);
+
+        m_memBtn = new QPushButton("MEM");
+        m_memBtn->setStyleSheet(btnStyle);
+        m_memBtn->setCheckable(true);
+        m_memBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_memBtn->setFixedHeight(22);
+        row->addWidget(m_memBtn);
+
+        vbox->addLayout(row);
+    }
+
+    // ── APD button + Active / Cal / Avail indicators ────────────────────────
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+
+        m_apdBtn = new QPushButton("APD");
+        m_apdBtn->setCheckable(true);
+        m_apdBtn->setFixedHeight(22);
+        m_apdBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_apdBtn->setStyleSheet(
+            "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
+            "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; }"
+            "QPushButton:checked { background: #006030; border: 1px solid #008040; color: #fff; }"
+            "QPushButton:hover { background: #204060; }");
+        row->addWidget(m_apdBtn, 2);  // 40%
+
+        // Inset container for ATU status words (styled like RIT/XIT readout)
+        auto* inset = new QWidget;
+        inset->setFixedHeight(22);
+        inset->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        inset->setObjectName("atuInset");
+        inset->setStyleSheet(
+            "#atuInset { background: #0a0a18; border: 1px solid #1e2e3e; border-radius: 3px; }"
+            "#atuInset QLabel { border: none; background: transparent; }");
+        auto* insetLayout = new QHBoxLayout(inset);
+        insetLayout->setContentsMargins(4, 0, 4, 0);
+        insetLayout->setSpacing(2);
+
+        m_activeInd = makeIndicator("Active");
+        m_calInd    = makeIndicator("Cal");
+        m_availInd  = makeIndicator("Avail");
+        // Larger font for status words inside the inset
+        const QString indStyle =
+            "QLabel { color: #405060; font-size: 11px; font-weight: bold; background: transparent; }";
+        m_activeInd->setStyleSheet(indStyle);
+        m_calInd->setStyleSheet(indStyle);
+        m_availInd->setStyleSheet(indStyle);
+
+        insetLayout->addWidget(m_activeInd);
+        insetLayout->addWidget(m_calInd);
+        insetLayout->addWidget(m_availInd);
+
+        row->addWidget(inset, 3);  // 60%
+        vbox->addLayout(row);
+    }
+
+    outer->addWidget(body);
+
+    // ── Slider → label + command connections ────────────────────────────────
+    connect(m_rfPowerSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_rfPowerLabel->setText(QString::number(v));
+        if (!m_updatingFromModel && m_model)
+            m_model->setRfPower(v);
+    });
+    connect(m_tunePowerSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_tunePowerLabel->setText(QString::number(v));
+        if (!m_updatingFromModel && m_model)
+            m_model->setTunePower(v);
+    });
+
+    // Profile dropdown → load command
+    connect(m_profileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int /*idx*/) {
+        if (!m_updatingFromModel && m_model) {
+            const QString name = m_profileCombo->currentText();
+            if (!name.isEmpty())
+                m_model->loadProfile(name);
+        }
+    });
+
+    // TUNE button — toggle tune
+    connect(m_tuneBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_model) return;
+        if (m_model->isTuning())
+            m_model->stopTune();
+        else
+            m_model->startTune();
+    });
+
+    // MOX button — toggle transmit
+    connect(m_moxBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (!m_updatingFromModel && m_model)
+            m_model->setMox(on);
+    });
+
+    // ATU button — start ATU tune
+    connect(m_atuBtn, &QPushButton::clicked, this, [this]() {
+        if (m_model) m_model->atuStart();
+    });
+
+    // MEM button — toggle ATU memories
+    connect(m_memBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (!m_updatingFromModel && m_model)
+            m_model->setAtuMemories(on);
+    });
+}
+
+void TxApplet::setTransmitModel(TransmitModel* model)
+{
+    if (m_model == model) return;
+    m_model = model;
+    if (!m_model) return;
+
+    // Transmit state changes → update sliders, tune button
+    connect(m_model, &TransmitModel::stateChanged, this, &TxApplet::syncFromModel);
+
+    // Tune state → red button
+    connect(m_model, &TransmitModel::tuneChanged, this, [this](bool tuning) {
+        if (tuning) {
+            m_tuneBtn->setStyleSheet(
+                "QPushButton { background: #cc2222; border: 1px solid #ff4444; "
+                "border-radius: 3px; color: #ffffff; font-size: 10px; font-weight: bold; "
+                "padding: 2px; }");
+            m_tuneBtn->setText("TUNING...");
+        } else {
+            m_tuneBtn->setStyleSheet(
+                "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
+                "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; "
+                "padding: 2px; }"
+                "QPushButton:hover { background: #204060; }");
+            m_tuneBtn->setText("TUNE");
+        }
+    });
+
+    // ATU state changes → indicators
+    connect(m_model, &TransmitModel::atuStateChanged, this, &TxApplet::syncAtuIndicators);
+
+    // Profile list changes → populate combo
+    connect(m_model, &TransmitModel::profileListChanged, this, [this]() {
+        m_updatingFromModel = true;
+        const QSignalBlocker blocker(m_profileCombo);
+        m_profileCombo->clear();
+        m_profileCombo->addItems(m_model->profileList());
+        // Select current profile if known
+        if (!m_model->activeProfile().isEmpty()) {
+            int idx = m_profileCombo->findText(m_model->activeProfile());
+            if (idx >= 0) m_profileCombo->setCurrentIndex(idx);
+        }
+        m_updatingFromModel = false;
+    });
+
+    syncFromModel();
+    syncAtuIndicators();
+}
+
+void TxApplet::syncFromModel()
+{
+    if (!m_model) return;
+
+    m_updatingFromModel = true;
+
+    if (m_rfPowerSlider->value() != m_model->rfPower())
+        m_rfPowerSlider->setValue(m_model->rfPower());
+    m_rfPowerLabel->setText(QString::number(m_model->rfPower()));
+
+    if (m_tunePowerSlider->value() != m_model->tunePower())
+        m_tunePowerSlider->setValue(m_model->tunePower());
+    m_tunePowerLabel->setText(QString::number(m_model->tunePower()));
+
+    // Active profile — update combo selection
+    if (!m_model->activeProfile().isEmpty()) {
+        int idx = m_profileCombo->findText(m_model->activeProfile());
+        if (idx >= 0 && m_profileCombo->currentIndex() != idx) {
+            const QSignalBlocker blocker(m_profileCombo);
+            m_profileCombo->setCurrentIndex(idx);
+        }
+    }
+
+    m_updatingFromModel = false;
+}
+
+void TxApplet::syncAtuIndicators()
+{
+    if (!m_model) return;
+
+    const auto status = m_model->atuStatus();
+
+    // Success — green when tune was successful
+    setIndicatorActive(m_successInd,
+        status == ATUStatus::Successful || status == ATUStatus::OK);
+
+    // Byp — orange when in bypass
+    setIndicatorActive(m_bypInd,
+        status == ATUStatus::Bypass || status == ATUStatus::ManualBypass,
+        QColor(0xd0, 0x90, 0x00));
+
+    // Mem — green when using memory
+    setIndicatorActive(m_memInd, m_model->usingMemory());
+
+    // Active — green when tuning in progress
+    setIndicatorActive(m_activeInd, status == ATUStatus::InProgress);
+
+    // Cal — placeholder, not yet mapped
+    setIndicatorActive(m_calInd, false);
+
+    // Avail — green when ATU is enabled/available
+    setIndicatorActive(m_availInd, m_model->atuEnabled());
+
+    // MEM button — sync checked state
+    {
+        m_updatingFromModel = true;
+        const QSignalBlocker blocker(m_memBtn);
+        m_memBtn->setChecked(m_model->memoriesEnabled());
+        m_updatingFromModel = false;
+    }
+}
+
+void TxApplet::updateMeters(float fwdPower, float swr)
+{
+    static_cast<HGauge*>(m_fwdGauge)->setValue(fwdPower);
+    static_cast<HGauge*>(m_swrGauge)->setValue(swr);
+}
+
+} // namespace AetherSDR

@@ -30,6 +30,11 @@ RadioModel::RadioModel(QObject* parent)
         m_connection.sendCommand(cmd);
     });
 
+    // Forward transmit model commands to the radio
+    connect(&m_transmitModel, &TransmitModel::commandReady, this, [this](const QString& cmd){
+        m_connection.sendCommand(cmd);
+    });
+
     m_reconnectTimer.setSingleShot(true);
     m_reconnectTimer.setInterval(3000);
     connect(&m_reconnectTimer, &QTimer::timeout, this, [this]() {
@@ -259,13 +264,17 @@ void RadioModel::onStatusReceived(const QString& object,
         return;
     }
 
-    // ATU status: "atu <handle> operate=1 bypass=0 ..."
+    // ATU status: "atu <handle> status=TUNE_SUCCESSFUL atu_enabled=1 ..."
+    // Routes to TransmitModel for the TX applet ATU controls.
+    // Also forwards to TunerModel if an external TGXL is connected.
     static const QRegularExpression atuRe(R"(^atu\s+(\S+)$)");
     if (object.startsWith("atu")) {
         const auto m = atuRe.match(object);
         if (m.hasMatch() && m_tunerModel.handle().isEmpty())
             m_tunerModel.setHandle(m.captured(1));
-        m_tunerModel.applyStatus(kvs);
+        m_transmitModel.applyAtuStatus(kvs);
+        if (m_tunerModel.isPresent())
+            m_tunerModel.applyStatus(kvs);
         return;
     }
 
@@ -298,7 +307,25 @@ void RadioModel::onStatusReceived(const QString& object,
         return;
     }
 
-    // Interlock, EQ, WAN, transmit etc. are informational — ignore for now.
+    // Transmit status: "transmit rfpower=93 tunepower=38 tune=0 ..."
+    if (object == "transmit") {
+        m_transmitModel.applyTransmitStatus(kvs);
+        return;
+    }
+
+    // TX profile status: "profile tx list=DAX^Default^..." or "profile tx current=Default"
+    if (object.startsWith("profile")) {
+        handleProfileStatus(object, kvs);
+        return;
+    }
+
+    // Interlock status: "interlock state=TRANSMITTING ..."
+    // TODO: track interlock state for TX button feedback
+    if (object == "interlock") {
+        return;
+    }
+
+    // EQ, WAN, etc. — informational, ignore for now.
 }
 
 void RadioModel::handleRadioStatus(const QMap<QString, QString>& kvs)
@@ -554,6 +581,27 @@ void RadioModel::createDefaultSlice(const QString& freqMhz,
                     }
                 });
         });
+}
+
+void RadioModel::handleProfileStatus(const QString& object,
+                                      const QMap<QString, QString>& kvs)
+{
+    // Profile status arrives as:
+    //   object = "profile tx"   kvs = { "list": "DAX^Default^macOS_default^" }
+    //   object = "profile tx"   kvs = { "current": "Default" }
+    // We only handle TX profiles for now.
+    if (!object.startsWith("profile tx"))
+        return;
+
+    if (kvs.contains("list")) {
+        QStringList profiles = kvs["list"].split('^', Qt::SkipEmptyParts);
+        m_transmitModel.setProfileList(profiles);
+        qDebug() << "RadioModel: TX profiles:" << profiles;
+    }
+    if (kvs.contains("current")) {
+        m_transmitModel.setActiveProfile(kvs["current"]);
+        qDebug() << "RadioModel: active TX profile:" << kvs["current"];
+    }
 }
 
 } // namespace AetherSDR

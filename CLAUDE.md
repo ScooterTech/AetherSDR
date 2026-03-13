@@ -30,7 +30,7 @@ cmake --build build -j$(nproc)
 
 Dependencies (Arch): `qt6-base qt6-multimedia cmake ninja pkgconf`
 
-Current version: **0.1.6** (set in both `CMakeLists.txt` and `README.md`).
+Current version: **0.1.7** (set in both `CMakeLists.txt` and `README.md`).
 
 ---
 
@@ -48,15 +48,19 @@ src/
 ├── models/
 │   ├── RadioModel          — Central state: owns connection, slices, panadapter config
 │   ├── SliceModel          — Per-slice state (freq, mode, filter, DSP, RIT/XIT, etc.)
-│   └── MeterModel          — Meter definition registry + VITA-49 value conversion
+│   ├── MeterModel          — Meter definition registry + VITA-49 value conversion
+│   └── TransmitModel       — Transmit state, internal ATU, TX profile management
 └── gui/
     ├── MainWindow          — Dark-themed QMainWindow, wires everything together
     ├── ConnectionPanel     — Radio list + connect/disconnect button
     ├── FrequencyDial       — Custom 9-digit MHz display with click/scroll/keyboard tuning
     ├── SpectrumWidget      — FFT spectrum + scrolling waterfall + frequency scale
-    ├── AppletPanel         — Toggle-button column of applet panels (ANLG, RX, TX stubs, etc.)
+    ├── AppletPanel         — Toggle-button column of applet panels (ANLG, RX, TX, etc.)
     ├── SMeterWidget        — Analog S-Meter gauge with peak hold (toggled by ANLG button)
-    └── RxApplet            — Full RX controls: antenna, filter, AGC, AF gain, pan, DSP, RIT/XIT
+    ├── RxApplet            — Full RX controls: antenna, filter, AGC, AF gain, pan, DSP, RIT/XIT
+    ├── TxApplet            — TX controls: power gauges/sliders, profiles, ATU, TUNE/MOX
+    ├── TunerApplet         — 4o3a TGXL tuner: gauges, relay bars, TUNE/OPERATE
+    └── HGauge.h            — Shared horizontal gauge widget (header-only)
 ```
 
 ### Data Flow
@@ -308,7 +312,7 @@ them with `slice get <id>` rather than creating new ones.
 
 ---
 
-## What's Implemented (v0.1.6)
+## What's Implemented (v0.1.7)
 
 - UDP radio discovery and TCP command/control
 - SmartSDR V/H/R/S/M protocol parsing
@@ -328,6 +332,10 @@ them with `slice get <id>` rather than creating new ones.
   TUNE (autotune) and OPERATE/BYPASS/STANDBY buttons
 - Tuner auto-detect: hidden when no TGXL, appears on amplifier subscription
 - Fwd Power gauge auto-scales: barefoot (0–200 W) vs PGXL (0–2000 W)
+- TX applet: Fwd Power/SWR gauges, RF Power/Tune Power sliders,
+  TX profile dropdown, TUNE/MOX/ATU/MEM buttons, ATU status indicators, APD
+- TransmitModel: transmit state, internal ATU state, TX profile management
+- HGauge shared header: reusable horizontal gauge widget for TunerApplet + TxApplet
 - TX button (sends `xmit 1` / `xmit 0`)
 - Persistent window geometry
 
@@ -346,4 +354,4 @@ them with `slice get <id>` rather than creating new ones.
 - Macro / voice keyer
 - Network audio (Opus compression)
 - TNF (tracking notch filter) management
-- Full TX applet (mic gain, compression, monitor, etc.)
+- TX applet extensions (mic gain, compression, monitor, etc.)

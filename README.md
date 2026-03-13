@@ -3,7 +3,7 @@
 A Linux-native SmartSDR-compatible client for FlexRadio Systems transceivers,
 built with **Qt6** and **C++20**.
 
-Current version: **0.1.6**
+Current version: **0.1.7**
 
 ---
 
@@ -41,6 +41,11 @@ Current version: **0.1.6**
 | Tuner applet (4o3a TGXL) — Fwd Power/SWR gauges, relay bars, TUNE/OPERATE | ✅ |
 | Tuner auto-detect — TUNE button hidden when no TGXL connected | ✅ |
 | Fwd Power gauge auto-scales for barefoot (200 W) vs PGXL (2000 W) | ✅ |
+| TX applet — Fwd Power/SWR gauges, RF Power/Tune Power sliders | ✅ |
+| TX applet — TX profile dropdown (live from radio) | ✅ |
+| TX applet — TUNE/MOX/ATU/MEM buttons + ATU status indicators | ✅ |
+| TX applet — APD button with Active/Cal/Avail status inset | ✅ |
+| TransmitModel — transmit state, ATU state, profile management | ✅ |
 | Audio TX (microphone → radio) | ⚠️ stub |
 | Volume / mute control | ✅ |
 | TX button | ✅ |
@@ -62,7 +67,8 @@ src/
 ├── models/
 │   ├── RadioModel.h/.cpp        # Central radio state, owns connection
 │   ├── SliceModel.h/.cpp        # Per-slice receiver state
-│   └── MeterModel.h/.cpp        # Meter definition registry + value conversion
+│   ├── MeterModel.h/.cpp        # Meter definition registry + value conversion
+│   └── TransmitModel.h/.cpp     # Transmit state, ATU, TX profiles
 └── gui/
     ├── MainWindow.h/.cpp        # Main application window
     ├── FrequencyDial.h/.cpp     # Custom 9-digit frequency widget
@@ -70,7 +76,10 @@ src/
     ├── SpectrumWidget.h/.cpp    # Panadapter display (FFT bins)
     ├── AppletPanel.h/.cpp       # Toggle-button applet container
     ├── SMeterWidget.h/.cpp      # Analog S-Meter gauge
-    └── RxApplet.h/.cpp          # Full RX controls applet
+    ├── RxApplet.h/.cpp          # Full RX controls applet
+    ├── TxApplet.h/.cpp          # TX controls applet (power, ATU, profiles)
+    ├── TunerApplet.h/.cpp       # TGXL tuner applet
+    └── HGauge.h                 # Shared horizontal gauge widget (header-only)
 ```
 
 ### Data flow
@@ -216,6 +225,25 @@ model-driven dial updates back to the radio.
 ---
 
 ## Changelog
+
+### v0.1.7
+- TX applet: Forward Power (0–120 W) and SWR (1.0–3.0) horizontal gauges fed
+  by radio meter data (VITA-49 PCC 0x8002)
+- TX applet: RF Power and Tune Power sliders with live sync to radio
+  (`transmit set rfpower=`, `transmit set tunepower=`)
+- TX applet: TX profile dropdown populated live from `profile tx list=` status,
+  loads profiles via `profile tx load "<name>"`
+- TX applet: TUNE button (toggles `transmit tune 1/0`, red while tuning),
+  MOX button (`xmit 0/1`), ATU button (`atu start`), MEM toggle
+  (`atu set memories_enabled=`)
+- TX applet: ATU status indicators — Success/Byp/Mem row and Active/Cal/Avail
+  inset with APD button
+- TransmitModel: state model for transmit parameters, internal ATU state, and
+  TX profile management with command emission
+- HGauge extracted to shared header (`src/gui/HGauge.h`) — reused by both
+  TunerApplet and TxApplet
+- RadioModel: routes `transmit`, `profile tx`, and `atu` status to TransmitModel;
+  ATU status dual-routed to both TransmitModel and TunerModel (when TGXL present)
 
 ### v0.1.6
 - Tuner applet for 4o3a Tuner Genius XL (TGXL): Forward Power and SWR

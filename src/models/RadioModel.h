@@ -5,6 +5,7 @@
 #include "SliceModel.h"
 #include "MeterModel.h"
 #include "TunerModel.h"
+#include "TransmitModel.h"
 
 #include <QObject>
 #include <QString>
@@ -35,6 +36,7 @@ public:
     PanadapterStream* panStream()   { return &m_panStream; }
     MeterModel*       meterModel()  { return &m_meterModel; }
     TunerModel*       tunerModel()  { return &m_tunerModel; }
+    TransmitModel*    transmitModel() { return &m_transmitModel; }
     bool              hasAmplifier() const { return m_hasAmplifier; }
 
     // Getters
@@ -83,6 +85,7 @@ private:
     void handleSliceStatus(int id, const QMap<QString, QString>& kvs, bool removed);
     void handleMeterStatus(const QString& rawBody);
     void handlePanadapterStatus(const QMap<QString, QString>& kvs);
+    void handleProfileStatus(const QString& object, const QMap<QString, QString>& kvs);
 
     void configurePan();
     void configureWaterfall();
@@ -96,6 +99,7 @@ private:
     PanadapterStream m_panStream;
     MeterModel       m_meterModel;
     TunerModel       m_tunerModel;
+    TransmitModel    m_transmitModel;
 
     QString     m_name;
     QString     m_model;

@@ -13,6 +13,7 @@ class SliceModel;
 class RxApplet;
 class SMeterWidget;
 class TunerApplet;
+class TxApplet;
 
 // AppletPanel — right-side panel with a row of toggle buttons at the top,
 // an S-Meter gauge below them, and a scrollable stack of applets.
@@ -29,6 +30,7 @@ public:
     RxApplet*     rxApplet()      { return m_rxApplet; }
     SMeterWidget* sMeterWidget()  { return m_sMeter; }
     TunerApplet*  tunerApplet()   { return m_tunerApplet; }
+    TxApplet*     txApplet()      { return m_txApplet; }
 
     // Show/hide the TUNE button and applet based on tuner presence.
     void setTunerVisible(bool visible);
@@ -38,6 +40,7 @@ private:
     SMeterWidget* m_sMeter{nullptr};
     RxApplet*    m_rxApplet{nullptr};
     TunerApplet* m_tunerApplet{nullptr};
+    TxApplet*    m_txApplet{nullptr};
     QPushButton* m_tuneBtn{nullptr}; // TUNE toggle button (hidden until TGXL detected)
     QVBoxLayout* m_stack{nullptr};   // layout inside the scroll area
 };
